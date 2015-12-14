@@ -88,11 +88,13 @@ class ode():
         self.P = np.int32(self.P)     #numero de parámetros
         self.I = np.int32(self.I)     #numero de inputs
 
-    def generate_code(self,debug=False,gpu = False, stochastic=False, dtype = np.float32):
+    def generate_code(self,debug=False,gpu = False, stochastic=False, variable_length = False, dtype = np.float32):
 
         assert self.ode_func!=None, "Run the setup first"
 
+        self.variable_length = variable_length
         self.gpu = gpu
+        self.stochastic = stochastic
 
         if debug:
             debug_str=""
@@ -111,7 +113,25 @@ class ode():
 
         device_str = [""]*5
         stochastic_str = [""]*6
-        cpu_str = [""]*3
+        cpu_str = [""]*3        
+        save_str = [""]*6
+        
+        if variable_length:
+        
+            save_str[0] = "int * N, int * cumsumN"
+            save_str[1] = "Y[ ( cumsumN[m] +(n-Nterm) )*K+ k ] = X[k];"
+            save_str[2] = "Nm = N[m];"
+            save_str[3] = "0;"
+            save_str[4] = "float *dt"
+            save_str[5] = "dtm = dt[m];"
+            
+        else:
+            save_str[0] = "int N"
+            save_str[1] = "Y[ ( (n-Nterm)*K+k)*M + m ] = X[k];"
+            save_str[2] = "Nm = N;"
+            save_str[3] = "_input[n+i*Nm];"
+            save_str[4] = "float dt"
+            save_str[5] = "dtm = dt;"
 
         if gpu:
             
@@ -217,7 +237,7 @@ class ode():
                                 X[i] += dt/6.*(F1[i] + F4[i] + 2.*(F2[i]+F3[i]));
                         }
         
-                        """+device_str[2]+""" void odeRK4(float *Y,float * _param, float * _input, float *x0, int N, int Nterm, int M, int K, float dt)
+                        """+device_str[2]+""" void odeRK4(float *Y,float * _param, float * _input, float *x0,  """+save_str[4]+""", """+save_str[0]+""", int Nterm, int M, int K)
                         {
                             // Y is the ouput must have N*K x M size
                             // the input must have N size
@@ -226,9 +246,14 @@ class ode():
                             // K is the size of the vector state
                             // dt is the temporal step
 
-                            int n,m,k,p,i;
+                            int n,m,k,p,i,Nm;
+                            float dtm;
                             """+device_str[4]+"""
         
+                            """+save_str[2]+"""
+                            
+                            """+save_str[5]+"""
+                            
                             // define the vector state
                             float X[%(K)s];
         
@@ -240,7 +265,7 @@ class ode():
         
                             """+stochastic_str[4]+"""                            
         
-              """+debug_str+""" printf("dt=%%g\\n",dt );
+              """+debug_str+""" printf("dt=%%g\\n",dtm );
 
               				"""+cpu_str[1]+""" 
         
@@ -266,25 +291,26 @@ class ode():
                             {
                                 for(i=0;i<%(I)s;i++)
                                 {
-                                    input[i] = _input[n+i*N];
+                                    input[i] = """+save_str[3]+"""
                                 }
         
-                                rk4(X,param,input,dt"""+stochastic_str[5]+""");
+                                rk4(X,param,input,dtm """+stochastic_str[5]+""");
         
                             }
                             
-                            for(n=Nterm;n<N;n++)
+                            for(n=Nterm;n<Nm;n++)
                             {
                                 for(i=0;i<%(I)s;i++)
                                 {
-                                    input[i] = _input[n+i*N];
+                                    input[i] = """+save_str[3]+"""
                                 }
         
-                                rk4(X,param,input,dt"""+stochastic_str[5]+""");
+                                rk4(X,param,input,dtm """+stochastic_str[5]+""");
                                 
                                 for(k=0;k<K;k++)
                                 {
-                                    Y[ ( (n-Nterm)*K+k)*M + m ] = X[k];
+
+                                    """+save_str[1]+"""
         
               """+debug_str+""" printf("m=%%d, X[%%d]=%%g\\t",m,k,X[k] );
         
@@ -361,14 +387,24 @@ setup(name = 'odeRK4',version = '1.0', ext_modules = [module1])""" % {"filename"
             assert inputs.shape[1]==I, "inputs shape should be n_inputs, n_timesteps"
             
         elif type(N) != type(None):
-            inputs = np.zeros((N,I)).astype(dtype, order='F')
+            
+            if type(N) in [list,np.ndarray]:
+                
+                
+                
+                assert self.variable_length, "Variable length not assigned"
+            
+            elif type(N) in [int,np.int]:
+                
+                inputs = np.zeros((N,I)).astype(dtype, order='F')
+                
+                assert Nterm >= 0 and Nterm < N, "Nterm (termalization steps) should be between 0 and N (simulation samples)" 
                 
         else:
             assert N!=None or inputs!=None, "A input signal or a number samples (N) is required"
        
-        N = self.N = np.int32(inputs.shape[0]) 
+       
 
-        assert Nterm >= 0 and Nterm < N, "Nterm (termalization steps) should be between 0 and N (simulation samples)" 
         
         params = np.vstack(tuple([d_params[p] for p in self.parameters])).T
         params = params.astype(dtype,order='F')
@@ -382,9 +418,23 @@ setup(name = 'odeRK4',version = '1.0', ext_modules = [module1])""" % {"filename"
 
         assert x0.size==K, "x0 size must be number of variables"       
 
-        dt = np.array(dt).astype(dtype) 
-        Y = np.zeros( ((N-Nterm)*K,M) ).astype(dtype)
-
+        
+        
+        if self.variable_length:
+            
+            N = np.array(N).astype(np.int32)
+            cumsumN = np.r_[0,np.cumsum(N)[:-1]]
+            cumsumN = cumsumN.astype(np.int32)
+            Y = np.zeros( (N-Nterm).sum()*K ).astype(dtype)
+            
+            dt = np.array(dt).astype(dtype)
+            
+            inputs = np.zeros(((N-Nterm).sum(),I)).astype(dtype, order='F')
+            
+        else:
+            N = self.N = np.int32(inputs.shape[0]) 
+            Y = np.zeros( ((N-Nterm)*K,M) ).astype(dtype)
+            dt = np.array(dt).astype(dtype) 
 
         if self.gpu:
 
@@ -395,20 +445,30 @@ setup(name = 'odeRK4',version = '1.0', ext_modules = [module1])""" % {"filename"
             gridShape = ( M / THREAD_NUM, 1, 1)
             blockShape = (THREAD_NUM, 1, 1)
             
-            mem = np.dtype(dtype).itemsize
+            mem = np.dtype(dtype).itemsize*Y.size
 
             (free,total)=drv.mem_get_info()
             if(mem>free):
                 print 'Free/Needed/Total Memory', free/1024**3,mem/1024**3, total/1024**3
                 raise MemoryError('Memory not available') 
 
-            tic = timeit.default_timer()
-            self.odeRK4_gpu( drv.Out(Y), drv.In(params), drv.In(inputs), drv.In(x0), N, Nterm, M , K, dt, block=blockShape, grid=gridShape )
-            toc = timeit.default_timer()
+            if self.variable_length:
+                
+                tic = timeit.default_timer()
+                self.odeRK4_gpu( drv.Out(Y), drv.In(params), drv.In(inputs), drv.In(x0), drv.In(dt), drv.In(N), drv.In(cumsumN), Nterm, M , K, block=blockShape, grid=gridShape )
+                toc = timeit.default_timer()
+    
+                return toc-tic,Y
+                
+            else:
 
-            d_Y = {k:Y[i::K] for i,k in enumerate(self.dynvars)}
+                tic = timeit.default_timer()
+                self.odeRK4_gpu( drv.Out(Y), drv.In(params), drv.In(inputs), drv.In(x0), dt, N, Nterm, M , K, block=blockShape, grid=gridShape )
+                toc = timeit.default_timer()
 
-            return toc-tic,d_Y
+                d_Y = {k:Y[i::K] for i,k in enumerate(self.dynvars)}
+    
+                return toc-tic,d_Y
 
         else:
 
