@@ -56,15 +56,19 @@ fs = 100.0
 dt = 1/fs
 N = int(T*fs)
 Nterm = int(Tterm*fs)
-t = np.arange(N-Nterm)/fs
+
+decimate = 4
 
 pgrid = param_grid(**params)
 
-time, out = hr.run(x0, pgrid ,dt, N = N, Nterm = Nterm)
+time, out = hr.run(x0, pgrid ,dt, decimate = decimate, N = N, Nterm = Nterm)
 
 #%%
+t = np.arange(N-Nterm)/fs
+td = t[::decimate]
+
 x = out['x']
 
 pl.figure(35)
 pl.clf()
-pl.plot(t, x + np.ones((t.size,M))*np.arange(M)*4)
+pl.plot(td, x + np.ones((td.size,M))*np.arange(M)*4)
