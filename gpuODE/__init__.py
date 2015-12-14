@@ -8,7 +8,7 @@ import numpy as np
 from utils import *
 
 
-def run_ode( FORMULA, FUNCTIONS, INPUTS,  inits, params, T , fs, inputs = None, stochastic = False, Tterm = 0, gpu = False, nthreads = 4 , dtype = np.float32):
+def run_ode( FORMULA, FUNCTIONS, INPUTS,  inits, params, T , fs, inputs = None, decimate=1 ,variable_length = False, stochastic = False, Tterm = 0, gpu = False, nthreads = 4 , dtype = np.float32):
     
     from gpuODE import ode, param_grid, devicefuncs
            
@@ -19,18 +19,18 @@ def run_ode( FORMULA, FUNCTIONS, INPUTS,  inits, params, T , fs, inputs = None, 
     
     T = T + Tterm
     dt = 1/fs
-    N = int(T*fs)
+    N = np.int32(T*fs)
     
     Nterm = int(Tterm*fs)
     
     extra_funcs = devicefuncs(FUNCTIONS, gpu = gpu)
     odeRK4.extra_func = extra_funcs
-    odeRK4.generate_code(debug=False, gpu = gpu, stochastic=stochastic, dtype = dtype )
+    odeRK4.generate_code(debug=False, gpu = gpu,variable_length = variable_length, stochastic=stochastic, dtype = dtype )
     odeRK4.compile()
 
     if gpu==True:
 
-        time, out = odeRK4.run(inits, param_grid(**params) , dt, inputs=inputs, N = N, Nterm = Nterm)
+        time, out = odeRK4.run(inits, param_grid(**params) , dt, decimate = decimate, inputs=inputs, N = N, Nterm = Nterm)
 
         return time, out
         
@@ -38,7 +38,7 @@ def run_ode( FORMULA, FUNCTIONS, INPUTS,  inits, params, T , fs, inputs = None, 
         import distributed_exploration as de
 
         def func(**args):
-            time,out = odeRK4.run(inits, args, dt , inputs=inputs, N = N , Nterm = Nterm)
+            time,out = odeRK4.run(inits, args, dt ,decimate=decimate, inputs=inputs, N = N , Nterm = Nterm)
             return time, out
         
         outs = de.explore_thread(func, param_grid(**params) ,nthreads=4)
