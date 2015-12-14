@@ -50,7 +50,7 @@ class ode():
 #    import pycuda.driver as drv
     name = None
 
-    extra_func = None
+    extra_func = ""
     ode_func = None
     code = None
 
@@ -69,13 +69,10 @@ class ode():
     def __init__(self,name):
         self.name = name
 
-    def setup(self,formula,parameters,inputs):
-
-        if inputs == []:
-            inputs = ["I"]
-            
+    def setup(self,formula,parameters,inputs=None):
+           
         if(type(formula)==dict):
-            self.dynvars, self.ode_func, self.K, self.P, self.I = eqparser2(formula,  parameters, inputs)
+            self.dynvars, self.ode_func, self.K, self.P, self.I = eqparser2(formula, parameters, inputs)
             self.parameters = parameters
             self.inputs = inputs
             
@@ -90,247 +87,275 @@ class ode():
 
     def generate_code(self,debug=False,gpu = False, stochastic=False, variable_length = False, dtype = np.float32):
 
+        from string import Template
+
         assert self.ode_func!=None, "Run the setup first"
 
         self.variable_length = variable_length
         self.gpu = gpu
         self.stochastic = stochastic
 
+        subds_dict={}
+        
         if debug:
-            debug_str=""
+            subds_dict["debug"]=""
         else:
-            debug_str="//"
+            subds_dict["debug"]="//"
           
         self.dtype = dtype
         
         if dtype == np.float32:
             
-            flo = "float"
+            subds_dict["float"] = "float"
             
         elif dtype == np.float64:
             
-            flo = "double"
-
-        device_str = [""]*5
-        stochastic_str = [""]*6
-        cpu_str = [""]*3        
-        save_str = [""]*6
+            subds_dict["float"] = "double"
         
+        subds_dict["stochastic0"] = ""
+        subds_dict["stochastic1"] = ""
+        subds_dict["stochastic2"] = ""
+        subds_dict["stochastic3"] = ""
+        subds_dict["stochastic4"] = ""
+        subds_dict["stochastic5"] = ""
+                    
+        subds_dict["cpu0"] =""
+        subds_dict["cpu1"] =""
+        subds_dict["cpu2"] =""
+        
+        subds_dict["device0"] =""
+        subds_dict["device1"] =""
+        subds_dict["device2"] =""
+        subds_dict["device3"] =""
+        subds_dict["device4"] =""
+            
         if variable_length:
         
-            save_str[0] = "int * N, int * cumsumN"
-            save_str[1] = "Y[ ( cumsumN[m] +(n-Nterm) )*K+ k ] = X[k];"
-            save_str[2] = "Nm = N[m];"
-            save_str[3] = "0;"
-            save_str[4] = "float *dt"
-            save_str[5] = "dtm = dt[m];"
+            subds_dict["save0"] = "int * N, int * cumsumN"
+            subds_dict["save1"] ="Y[ ( cumsumN[m] + c )*`self.K`+ k ] = X[k];"
+            subds_dict["save2"] ="Nm = N[m];"
+            subds_dict["save3"] ="0;"
+            subds_dict["save4"] ="float *dt"
+            subds_dict["save5"] ="dtm = dt[m];"
             
         else:
-            save_str[0] = "int N"
-            save_str[1] = "Y[ ( (n-Nterm)*K+k)*M + m ] = X[k];"
-            save_str[2] = "Nm = N;"
-            save_str[3] = "_input[n+i*Nm];"
-            save_str[4] = "float dt"
-            save_str[5] = "dtm = dt;"
+            subds_dict["save0"] ="int N"
+            subds_dict["save1"] ="Y[ ( c*"+`self.K`+"+k)*M + m ] = X[k];"
+            subds_dict["save2"] ="Nm = N;"
+            subds_dict["save3"] ="_input[n+i*Nm];"
+            subds_dict["save4"] ="float dt"
+            subds_dict["save5"] ="dtm = dt;"
 
         if gpu:
             
             if stochastic:
-                stochastic_str[0] =  "#include <curand_kernel.h>" 
-                stochastic_str[1] = ", curandState *state" 
-                stochastic_str[2] = "float noise = curand_normal(state);" 
-                stochastic_str[3] =  ", state" 
-                stochastic_str[4] = """curandState state;
+                subds_dict["stochastic0"] = "#include <curand_kernel.h>" 
+                subds_dict["stochastic1"] =", curandState *state" 
+                subds_dict["stochastic2"] ="float noise = curand_normal(state);" 
+                subds_dict["stochastic3"] = ", state" 
+                subds_dict["stochastic4"] ="""curandState state;
                             curand_init(1234, m, 0, &state);"""
-                stochastic_str[5] = ",&state"
-    
+                subds_dict["stochastic5"] =",&state"    
 
-            device_str[0] = ""#"""extern "C"{"""
-            device_str[1] = "__device__"
-            device_str[2] = "__global__"
-            device_str[3] = ""#"}"
-            device_str[4] = "m = blockIdx.x*blockDim.x + threadIdx.x;"
+            subds_dict["device0"] =""#"""extern "C"{"""
+            subds_dict["device1"] ="__device__"
+            subds_dict["device2"] ="__global__"
+            subds_dict["device3"] =""#"}"
+            subds_dict["device4"] ="m = blockIdx.x*blockDim.x + threadIdx.x;"
 
         else:
+            
+            subds_dict["cpu0"] ="#include <math.h>"
+            subds_dict["cpu1"] ="for(m=0;m<M;m++){"
+            subds_dict["cpu2"] ="}"
 
-			cpu_str[0] = "#include <math.h>"
-			cpu_str[1] = "for(m=0;m<M;m++){"
-			cpu_str[2] = "}"
 
-        self.code = """
+        subds_dict["K"] = self.K
+        subds_dict["P"] = self.P
+        subds_dict["I"] = self.I
 
-                    """+debug_str+""" #include <stdio.h>
-
-                    """+cpu_str[0]+"""
-
-                    """+stochastic_str[0]+"""                    
     
-                    """+device_str[0]+"""
+        subds_dict["extra_funcs"] = self.extra_func
+        subds_dict["ode_func"] = self.ode_func
+
+#       $debug for(int k=0;k<n_eq;k++)
+#       $debug    printf("F1[%d]=%g\\t",k,F1[k] );
+           
+        self.code_template = Template("""
+
+                    $debug #include <stdio.h>
+
+                    $cpu0
+
+                    $stochastic0
+    
+                    $device0
 
 
                     #define PI 3.141592653589793                    
                     
 
-                        """+(self.extra_func,"")[self.extra_func==None]+"""
+                    $extra_funcs
                         
                         
-                        """+device_str[1]+""" void equations( float *X,float *dX, float *param, float * input """+stochastic_str[1]+""")
-                        {
-                        
-                           """+stochastic_str[2]+"""
-        
-                            """+self.ode_func+"""
-        
-                        }
-        
-                        """+device_str[1]+""" void rk4(float *X, float *param, float * input, float dt """+stochastic_str[1]+""")
-                        {
-        
-                            // Runge-Kutta integrator (4th order)
-                            // Inputs
-                            //   X          Current value of dependent variable
-                            //   n_eq         Number of elements in dependent variable X
-                            //   t          Independent variable (usually time)
-                            //   dt        Step size (usually time step)
-                            //   derivsRK   Right hand side of the ODE; derivsRK is the
-                            //              name of the function which returns dX/dt
-                            //              Calling format derivsRK(X,t,param,dXdt).
-                            //   param      Extra parameters passed to derivsRK
-                            // Output
-                            //   X          New value of X after a step of size dt
-        
-                            float F1[%(K)s], F2[%(K)s], F3[%(K)s], F4[%(K)s], Xtemp[%(K)s];
-                            int n_eq = %(K)s;
-        
-                            //* Evaluate F1 = f(X,t).
-                            equations( X, F1, param, input"""+stochastic_str[3]+""");
-        
-              """+debug_str+""" for(int k=0;k<n_eq;k++)
-              """+debug_str+"""     printf("F1[%%d]=%%g\\t",k,F1[k] );
-        
-                            //* Evaluate F2 = f( X+dt*F1/2, t+dt/2 ).
-                            float half_dt = 0.5*dt;
-                            //float t_half = t + half_dt;
-                            int i;
-        
-                            for( i=0; i<n_eq; i++ )
-                                Xtemp[i] = X[i] + half_dt*F1[i];
-        
-                            equations( Xtemp, F2, param, input"""+stochastic_str[3]+""");
-        
-                            //* Evaluate F3 = f( X+dt*F2/2, t+dt/2 ).
-                            for( i=0; i<n_eq; i++ )
-                                Xtemp[i] = X[i] + half_dt*F2[i];
-        
-                            equations( Xtemp, F3, param, input"""+stochastic_str[3]+""");
-        
-                            //* Evaluate F4 = f( X+dt*F3, t+dt ).
-                            //float t_full = t + dt;
-        
-                            for( i=0; i<n_eq; i++ )
-                                Xtemp[i] = X[i] + dt*F3[i];
-        
-                            equations( Xtemp, F4, param, input"""+stochastic_str[3]+""");
-        
-                            //* Return X(t+dt) computed from fourth-order R-K.
-                            for( i=0; i<n_eq; i++ )
-                                X[i] += dt/6.*(F1[i] + F4[i] + 2.*(F2[i]+F3[i]));
-                        }
-        
-                        """+device_str[2]+""" void odeRK4(float *Y,float * _param, float * _input, float *x0,  """+save_str[4]+""", """+save_str[0]+""", int Nterm, int M, int K)
-                        {
-                            // Y is the ouput must have N*K x M size
-                            // the input must have N size
-                            // X is the vector state
-                            // dX is the vector state derivative
-                            // K is the size of the vector state
-                            // dt is the temporal step
-
-                            int n,m,k,p,i,Nm;
-                            float dtm;
-                            """+device_str[4]+"""
-        
-                            """+save_str[2]+"""
-                            
-                            """+save_str[5]+"""
-                            
-                            // define the vector state
-                            float X[%(K)s];
-        
-                            // define the parameters state
-                            float param[%(P)s];
-        
-                            // define the input array
-                            float input[%(I)s];
-        
-                            """+stochastic_str[4]+"""                            
-        
-              """+debug_str+""" printf("dt=%%g\\n",dtm );
-
-              				"""+cpu_str[1]+""" 
-        
-                            for(k=0;k<K;k++)
-                            {
-                                X[k] = x0[k];
-        
-              """+debug_str+""" printf("m=%%d, X0[%%d]=%%g\\t",m,k,X[k] );
-        
-                            }
-        
-              """+debug_str+""" printf("\\n");
-        
-                            for(p=0;p<%(P)s;p++)
-                            {
-                                param[p] = _param[m+p*M];
-              """+debug_str+""" printf("m=%%d, p=%%d, param=%%g\\n", m, p, _param[m+p*M] );
-                            }
-        
-              """+debug_str+""" printf("input=%%g\\n",_input[0] );
-        
-                            for(n=0;n<Nterm;n++)
-                            {
-                                for(i=0;i<%(I)s;i++)
-                                {
-                                    input[i] = """+save_str[3]+"""
-                                }
-        
-                                rk4(X,param,input,dtm """+stochastic_str[5]+""");
-        
-                            }
-                            
-                            for(n=Nterm;n<Nm;n++)
-                            {
-                                for(i=0;i<%(I)s;i++)
-                                {
-                                    input[i] = """+save_str[3]+"""
-                                }
-        
-                                rk4(X,param,input,dtm """+stochastic_str[5]+""");
-                                
-                                for(k=0;k<K;k++)
-                                {
-
-                                    """+save_str[1]+"""
-        
-              """+debug_str+""" printf("m=%%d, X[%%d]=%%g\\t",m,k,X[k] );
-        
-                                }
-              """+debug_str+""" printf("\\n");
-                            }
-            				
-            				"""+cpu_str[2]+""" 
-                        }
-
-                    """+device_str[3]
-
-        K = self.K
-        P = self.P
-        I = self.I
+                    $device1 void equations( float *X,float *dX, float *param, float * input $stochastic1)
+                    {
+                    
+                        $stochastic2
     
-        self.code = self.code % {'K':K,'P':P,'I':I}
-        
-        self.code = self.code.replace("float",flo)
+                        $ode_func
+    
+                    }
+    
+                    $device1 void rk4(float *X, float *param, float * input, float dt $stochastic1)
+                    {
+    
+                        // Runge-Kutta integrator (4th order)
+                        // Inputs
+                        //   X          Current value of dependent variable
+                        //   n_eq         Number of elements in dependent variable X
+                        //   t          Independent variable (usually time)
+                        //   dt        Step size (usually time step)
+                        //   derivsRK   Right hand side of the ODE; derivsRK is the
+                        //              name of the function which returns dX/dt
+                        //              Calling format derivsRK(X,t,param,dXdt).
+                        //   param      Extra parameters passed to derivsRK
+                        // Output
+                        //   X          New value of X after a step of size dt
+    
+                        float F1[$K], F2[$K], F3[$K], F4[$K], Xtemp[$K];
+                        int n_eq = $K;
+    
+                        //* Evaluate F1 = f(X,t).
+                        equations( X, F1, param, input $stochastic3);
+    
+                        
+    
+                        //* Evaluate F2 = f( X+dt*F1/2, t+dt/2 ).
+                        float half_dt = 0.5*dt;
+                        //float t_half = t + half_dt;
+                        int i;
+    
+                        for( i=0; i<n_eq; i++ )
+                            Xtemp[i] = X[i] + half_dt*F1[i];
+    
+                        equations( Xtemp, F2, param, input $stochastic3);
+    
+                        //* Evaluate F3 = f( X+dt*F2/2, t+dt/2 ).
+                        for( i=0; i<n_eq; i++ )
+                            Xtemp[i] = X[i] + half_dt*F2[i];
+    
+                        equations( Xtemp, F3, param, input $stochastic3);
+    
+                        //* Evaluate F4 = f( X+dt*F3, t+dt ).
+                        //float t_full = t + dt;
+    
+                        for( i=0; i<n_eq; i++ )
+                            Xtemp[i] = X[i] + dt*F3[i];
+    
+                        equations( Xtemp, F4, param, input $stochastic3);
+    
+                        //* Return X(t+dt) computed from fourth-order R-K.
+                        for( i=0; i<n_eq; i++ )
+                            X[i] += dt/6.*(F1[i] + F4[i] + 2.*(F2[i]+F3[i]));
+                    }
+    
+                    $device2 void odeRK4(float *Y,float * _param, float * _input, float *x0,  $save4, $save0, int Nterm, int decimate, int M)
+                    {
+                        // Y is the ouput must have N*K x M size
+                        // the input must have N size
+                        // X is the vector state
+                        // dX is the vector state derivative
+                        // K is the size of the vector state
+                        // dt is the temporal step
 
+                        int n,m,k,p,i,Nm,c;
+                        float dtm;
+                        
+                        $device4
+    
+                        $save2
+                        
+                        $save5
+                        
+                        // define the vector state
+                        float X[$K];
+    
+                        // define the parameters state
+                        float param[$P];
+    
+                        // define the input array
+                        float input[$I];
+    
+                        $stochastic4                       
+    
+                        $debug printf("dt=%g\\n",dtm );
+
+          			  $cpu1
+    
+                        for(k=0;k<$K;k++)
+                        {
+                            X[k] = x0[k];
+    
+                        $debug printf("m=%d, X0[%d]=%g\\t",m,k,X[k] );
+    
+                        }
+    
+                        $debug printf("\\n");
+    
+                        for(p=0;p<$P;p++)
+                        {
+                            param[p] = _param[m+p*M];
+                            $debug printf("m=%d, p=%d, param=%g\\n", m, p, _param[m+p*M] );
+                        }
+    
+                        $debug printf("input=%g\\n",_input[0] );
+    
+                        for(n=0;n<Nterm;n++)
+                        {
+                            for(i=0;i<$I;i++)
+                            {
+                                input[i] = $save3
+                            }
+    
+                            rk4(X,param,input,dtm $stochastic5);    
+                        }
+                        
+                        c = 0;
+                        
+                        for(n=Nterm;n<Nm;n++)
+                        {
+                            for(i=0;i<$I;i++)
+                            {
+                                input[i] = $save3
+                            }
+    
+                            rk4(X,param,input,dtm $stochastic5);
+                            
+                            if(n % decimate == 0)
+                            {
+                                for(k=0;k<$K;k++)
+                                {
+
+                                    $save1
+        
+                                    $debug printf("m=%d, n=%d, c=%d, X[%d]=%g\\t",m,n,c,k,X[k] );
+                                               
+                                }
+                                
+                                c++;
+                           }
+                              
+                        }
+        				
+                        $cpu2
+                    }
+
+                $device3 """)
+                
+        self.code = self.code_template.substitute(subds_dict)
+        
+        
     def compile(self):
         import pycuda.autoinit
         assert self.code!=None, "Generate the code first"
@@ -369,7 +394,7 @@ setup(name = 'odeRK4',version = '1.0', ext_modules = [module1])""" % {"filename"
             self.odeRK4 = ctypes.cdll.LoadLibrary("./build/lib.linux-x86_64-2.7/odeRK4.so").odeRK4        
 
 
-    def run(self, d_x0, d_params, dt, inputs=None, N = None, Nterm = 0, THREAD_NUM = 32):
+    def run(self, d_x0, d_params, dt, decimate = 1, inputs=None, N = None, Nterm = 0, THREAD_NUM = 32):
     
         import timeit
 
@@ -380,6 +405,7 @@ setup(name = 'odeRK4',version = '1.0', ext_modules = [module1])""" % {"filename"
         K = self.K
         P = self.P
         I = self.I
+        decimate = np.int32(decimate)
         self.Nterm = Nterm =  np.int32(Nterm)   
         
         if type(inputs) != type(None):
@@ -413,6 +439,7 @@ setup(name = 'odeRK4',version = '1.0', ext_modules = [module1])""" % {"filename"
         
         M = self.M = np.int32(params.shape[0]) 
         
+        
         x0 = [d_x0[k] for k in self.dynvars]        
         x0 =  np.array(x0).astype(dtype)
 
@@ -425,7 +452,7 @@ setup(name = 'odeRK4',version = '1.0', ext_modules = [module1])""" % {"filename"
             N = np.array(N).astype(np.int32)
             cumsumN = np.r_[0,np.cumsum(N)[:-1]]
             cumsumN = cumsumN.astype(np.int32)
-            Y = np.zeros( (N-Nterm).sum()*K ).astype(dtype)
+            Y = np.zeros( (N-Nterm).sum()*K/decimate ).astype(dtype)
             
             dt = np.array(dt).astype(dtype)
             
@@ -433,7 +460,7 @@ setup(name = 'odeRK4',version = '1.0', ext_modules = [module1])""" % {"filename"
             
         else:
             N = self.N = np.int32(inputs.shape[0]) 
-            Y = np.zeros( ((N-Nterm)*K,M) ).astype(dtype)
+            Y = np.zeros( ((N-Nterm)*K/decimate,M) ).astype(dtype)
             dt = np.array(dt).astype(dtype) 
 
         if self.gpu:
@@ -449,13 +476,13 @@ setup(name = 'odeRK4',version = '1.0', ext_modules = [module1])""" % {"filename"
 
             (free,total)=drv.mem_get_info()
             if(mem>free):
-                print 'Free/Needed/Total Memory', free/1024**3,mem/1024**3, total/1024**3
+                print 'Total Memory: {} MB, Free: {} MB, Needed: {} MB'.format(total/1024**2, free/1024**2,mem/1024**2)
                 raise MemoryError('Memory not available') 
 
             if self.variable_length:
                 
                 tic = timeit.default_timer()
-                self.odeRK4_gpu( drv.Out(Y), drv.In(params), drv.In(inputs), drv.In(x0), drv.In(dt), drv.In(N), drv.In(cumsumN), Nterm, M , K, block=blockShape, grid=gridShape )
+                self.odeRK4_gpu( drv.Out(Y), drv.In(params), drv.In(inputs), drv.In(x0), drv.In(dt), drv.In(N), drv.In(cumsumN), Nterm, decimate, M , block=blockShape, grid=gridShape )
                 toc = timeit.default_timer()
     
                 return toc-tic,Y
@@ -463,7 +490,7 @@ setup(name = 'odeRK4',version = '1.0', ext_modules = [module1])""" % {"filename"
             else:
 
                 tic = timeit.default_timer()
-                self.odeRK4_gpu( drv.Out(Y), drv.In(params), drv.In(inputs), drv.In(x0), dt, N, Nterm, M , K, block=blockShape, grid=gridShape )
+                self.odeRK4_gpu( drv.Out(Y), drv.In(params), drv.In(inputs), drv.In(x0), dt, N, Nterm,decimate, M ,  block=blockShape, grid=gridShape )
                 toc = timeit.default_timer()
 
                 d_Y = {k:Y[i::K] for i,k in enumerate(self.dynvars)}
@@ -485,19 +512,35 @@ setup(name = 'odeRK4',version = '1.0', ext_modules = [module1])""" % {"filename"
                 flo = ctypes.c_double
             
             self.odeRK4.restype = None
-            self.odeRK4.argtypes = [ndpointer(flo, flags="C_CONTIGUOUS"),
-                                    ndpointer(flo, flags="F_CONTIGUOUS"),
-                                    ndpointer(flo, flags="F_CONTIGUOUS"),
-                                    ndpointer(flo, flags="C_CONTIGUOUS"),
-                                    ctypes.c_int,
-                                    ctypes.c_int,
-                                    ctypes.c_int,
-                                    ctypes.c_int,
-                                    flo]
+            
+            if self.variable_length:
+                
+                self.odeRK4.argtypes = [ndpointer(flo, flags="C_CONTIGUOUS"),
+                                        ndpointer(flo, flags="F_CONTIGUOUS"),
+                                        ndpointer(flo, flags="F_CONTIGUOUS"),
+                                        ndpointer(flo, flags="C_CONTIGUOUS"),
+                                        ndpointer(flo, flags="C_CONTIGUOUS"),
+                                        ndpointer(flo, flags="C_CONTIGUOUS"),
+                                        ctypes.c_int,
+                                        ctypes.c_int,
+                                        ctypes.c_int,
+                                        ctypes.c_int]
+            else:
+                
+                self.odeRK4.argtypes = [ndpointer(flo, flags="C_CONTIGUOUS"),
+                                        ndpointer(flo, flags="F_CONTIGUOUS"),
+                                        ndpointer(flo, flags="F_CONTIGUOUS"),
+                                        ndpointer(flo, flags="C_CONTIGUOUS"),
+                                        flo,
+                                        ctypes.c_int,
+                                        ctypes.c_int,
+                                        ctypes.c_int,
+                                        ctypes.c_int,
+                                        ctypes.c_int]
                 
             
             tic = timeit.default_timer()
-            self.odeRK4( Y, params, inputs, x0, N, Nterm, M , K, dt )
+            self.odeRK4( Y, params, inputs, x0, dt, N, Nterm, decimate, M , K )
             toc = timeit.default_timer()
 
             d_Y = {k:Y[i::K] for i,k in enumerate(self.dynvars)}
