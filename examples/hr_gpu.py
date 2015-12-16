@@ -38,7 +38,7 @@ M2 = 8
 M = M1*M2
                     
 i_list = np.linspace(1.5,3,M1)
-r_list = np.logspace(-4,-2,M2)
+r_list = np.logspace(-3,-2,M2)
 
 params = {'a':1,
             'b':3,

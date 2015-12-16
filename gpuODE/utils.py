@@ -91,7 +91,7 @@ def eqparser(FORMULA, PARAMETERS, INPUTS):
 
 def param_grid(**kwargs):
 
-    assert len(kwargs)>1
+    assert len(kwargs)>0
 
     fixed = []
     explore = []

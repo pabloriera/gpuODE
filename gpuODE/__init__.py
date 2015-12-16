@@ -21,7 +21,7 @@ def run_ode( FORMULA, FUNCTIONS, INPUTS,  inits, params, T , fs, inputs = None, 
     dt = 1/fs
     N = np.int32(T*fs)
     
-    Nterm = int(Tterm*fs)
+    Nterm = np.int32(Tterm*fs).min()
     
     extra_funcs = devicefuncs(FUNCTIONS, gpu = gpu)
     odeRK4.extra_func = extra_funcs
@@ -101,17 +101,7 @@ class ode():
             subds_dict["debug"]=""
         else:
             subds_dict["debug"]="//"
-          
-        self.dtype = dtype
-        
-        if dtype == np.float32:
-            
-            subds_dict["float"] = "float"
-            
-        elif dtype == np.float64:
-            
-            subds_dict["float"] = "double"
-        
+
         subds_dict["stochastic0"] = ""
         subds_dict["stochastic1"] = ""
         subds_dict["stochastic2"] = ""
@@ -157,10 +147,10 @@ class ode():
                             curand_init(1234, m, 0, &state);"""
                 subds_dict["stochastic5"] =",&state"    
 
-            subds_dict["device0"] =""#"""extern "C"{"""
+            subds_dict["device0"] ="""extern "C"{"""
             subds_dict["device1"] ="__device__"
             subds_dict["device2"] ="__global__"
-            subds_dict["device3"] =""#"}"
+            subds_dict["device3"] ="}"
             subds_dict["device4"] ="m = blockIdx.x*blockDim.x + threadIdx.x;"
 
         else:
@@ -188,9 +178,8 @@ class ode():
                     $cpu0
 
                     $stochastic0
-    
-                    $device0
 
+                    $device0
 
                     #define PI 3.141592653589793                    
                     
@@ -353,8 +342,19 @@ class ode():
 
                 $device3 """)
                 
-        self.code = self.code_template.substitute(subds_dict)
         
+
+        self.dtype = dtype
+        
+        if dtype == np.float32:
+            
+            flo = "float"
+            
+        elif dtype == np.float64:
+            
+            flo = "double"
+        
+        self.code = self.code_template.substitute(subds_dict).replace("float",flo)
         
     def compile(self):
         import pycuda.autoinit
@@ -364,8 +364,8 @@ class ode():
 
             from pycuda.compiler import SourceModule
 
-            mod = SourceModule(self.code)
-            # mod = SourceModule(self.code,no_extern_c=True)
+            # mod = SourceModule(self.code)
+            mod = SourceModule(self.code,no_extern_c=True)
             self.odeRK4_gpu = mod.get_function("odeRK4")
 
         else:            
@@ -416,11 +416,9 @@ setup(name = 'odeRK4',version = '1.0', ext_modules = [module1])""" % {"filename"
             
             if type(N) in [list,np.ndarray]:
                 
-                
-                
                 assert self.variable_length, "Variable length not assigned"
             
-            elif type(N) in [int,np.int]:
+            elif type(N) in [int,np.int,np.int32]:
                 
                 inputs = np.zeros((N,I)).astype(dtype, order='F')
                 
