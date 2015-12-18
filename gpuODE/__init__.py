@@ -10,7 +10,7 @@ from utils import *
 
 def run_ode( FORMULA, FUNCTIONS, INPUTS,  inits, params, T , fs, inputs = None, decimate=1 ,variable_length = False, stochastic = False, Tterm = 0, gpu = False, nthreads = 4 , dtype = np.float32):
     
-    from gpuODE import ode, param_grid, devicefuncs
+    from gpuODE import ode, param_grid, funcs2code
            
     PARAMETERS = params.keys()
        
@@ -23,7 +23,7 @@ def run_ode( FORMULA, FUNCTIONS, INPUTS,  inits, params, T , fs, inputs = None, 
     
     Nterm = np.int32(Tterm*fs).min()
     
-    extra_funcs = devicefuncs(FUNCTIONS, gpu = gpu)
+    extra_funcs = funcs2code(FUNCTIONS, gpu = gpu)
     odeRK4.extra_func = extra_funcs
     odeRK4.generate_code(debug=False, gpu = gpu,variable_length = variable_length, stochastic=stochastic, dtype = dtype )
     odeRK4.compile()

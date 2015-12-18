@@ -137,7 +137,7 @@ def param_grid(**kwargs):
     else:
         return {k:kwargs[k] for k in fixed}
 
-def devicefuncs(fnspecs,gpu=False):
+def funcs2code(fnspecs,gpu=False):
 
     """
     example:
