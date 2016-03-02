@@ -18,7 +18,7 @@ def run_ode( FORMULA, FUNCTIONS, INPUTS,  inits, params, T , fs, inputs = None, 
     odeRK4.setup(FORMULA, PARAMETERS, INPUTS)
     
     T = T + Tterm
-    dt = 1/fs
+    dt = 1.0/float(fs)
     N = np.int32(T*fs)
     
     Nterm = np.int32(Tterm*fs).min()
@@ -41,7 +41,7 @@ def run_ode( FORMULA, FUNCTIONS, INPUTS,  inits, params, T , fs, inputs = None, 
             time,out = odeRK4.run(inits, args, dt ,decimate=decimate, inputs=inputs, N = N , Nterm = Nterm)
             return time, out
         
-        outs = de.explore_thread(func, param_grid(**params) ,nthreads=4)
+        outs = de.explore_thread(func, param_grid(**params) ,nthreads=nthreads)
         
         return outs
 
@@ -370,12 +370,14 @@ class ode():
 
         else:            
 
-            import tempfile
+            import tempfile, os
 
             fh = tempfile.NamedTemporaryFile(mode='w',suffix='.c')
             fh.write(self.code)
             fh.seek(0)
             
+            # os.environ["CC"]="g++"
+
             setup_script = \
 """from distutils.core import setup, Extension
 module1 = Extension('odeRK4', sources = ["%(filename)s"], libraries = ['m'])
