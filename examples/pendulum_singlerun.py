@@ -1,9 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Thu Dec 10 13:17:16 2015
 
-@author: miles
-"""
 from __future__ import division
 
 from gpuODE import run_ode

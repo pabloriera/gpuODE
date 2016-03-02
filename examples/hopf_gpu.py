@@ -1,9 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Wed Jun  3 07:23:23 2015
 
-@author: miles
-"""
 from __future__ import division
 from gpuODE import ode, param_grid
 import pylab as pl
@@ -44,6 +40,7 @@ dt = 1/fs
 N = int(T*fs)
 Nterm = int(Tterm*fs)
 t = np.arange(N-Nterm)/fs
+
 
 tramp = 0.05
 ramp = np.ones(t.size)
