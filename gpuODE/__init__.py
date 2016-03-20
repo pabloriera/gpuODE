@@ -8,42 +8,61 @@ import numpy as np
 from utils import *
 
 
-def run_ode( FORMULA, FUNCTIONS, INPUTS,  inits, params, T , fs, inputs = None, decimate=1 ,variable_length = False, stochastic = False, Tterm = 0, gpu = False, nthreads = 4 , dtype = np.float32):
+def run_ode( FORMULA, FUNCTIONS, INPUTS,  inits, params, T , fs, inputs = None, decimate=1 ,variable_length = False, stochastic = False, Tterm = 0, gpu = False, nthreads = 4 , dtype = np.float32, debug = False,seed =None,threads_per_block=32 ):
     
     from gpuODE import ode, param_grid, funcs2code
+
            
     PARAMETERS = params.keys()
        
     odeRK4 = ode("ode")
     odeRK4.setup(FORMULA, PARAMETERS, INPUTS)
     
-    T = T + Tterm
+    Tt = T + Tterm
     dt = 1.0/float(fs)
-    N = np.int32(T*fs)
+    N = np.int32(Tt*fs)
     
     Nterm = np.int32(Tterm*fs).min()
     
     extra_funcs = funcs2code(FUNCTIONS, gpu = gpu)
     odeRK4.extra_func = extra_funcs
-    odeRK4.generate_code(debug=False, gpu = gpu,variable_length = variable_length, stochastic=stochastic, dtype = dtype )
+    odeRK4.generate_code(debug=debug, gpu = gpu,variable_length = variable_length, stochastic=stochastic, dtype = dtype)
     odeRK4.compile()
 
     if gpu==True:
 
-        time, out = odeRK4.run(inits, param_grid(**params) , dt, decimate = decimate, inputs=inputs, N = N, Nterm = Nterm)
+        time, out = odeRK4.run(inits, param_grid(**params) , dt, decimate = decimate, inputs=inputs, N = N, Nterm = Nterm,seed = seed,threads_per_block=threads_per_block)
 
         return time, out
         
     else:
         import distributed_exploration as de
+        import timeit
 
+        #Modifications are needed to change the seed on differnet threads
         def func(**args):
-            time,out = odeRK4.run(inits, args, dt ,decimate=decimate, inputs=inputs, N = N , Nterm = Nterm)
+            time,out = odeRK4.run(inits, args, dt ,decimate=decimate, inputs=inputs, N = N , Nterm = Nterm,seed = seed)
             return time, out
         
-        outs = de.explore_thread(func, param_grid(**params) ,nthreads=nthreads)
-        
-        return outs
+        tic = timeit.default_timer()
+        out0 = de.explore_thread(func, param_grid(**params) ,nthreads=nthreads)
+        toc = timeit.default_timer()
+
+        Nm = int(T*fs)/decimate
+        M = len(out0)
+
+        out = {}
+
+        for j,k in enumerate(FORMULA.keys()):   
+
+            out[k] = np.zeros((Nm,M))
+            
+        for i,o in enumerate(out0):
+            for j,k in enumerate(FORMULA.keys()):
+                out[k][:,i] = o['out'][1][k].T[0,:N]
+    
+            
+        return toc-tic, out
 
 class ode():
 
@@ -85,7 +104,7 @@ class ode():
         self.P = np.int32(self.P)     #numero de parámetros
         self.I = np.int32(self.I)     #numero de inputs
 
-    def generate_code(self,debug=False,gpu = False, stochastic=False, variable_length = False, dtype = np.float32):
+    def generate_code(self,debug=False,gpu = False, stochastic=False, variable_length = False, dtype = np.float32, seed = 1234):
 
         from string import Template
 
@@ -144,8 +163,9 @@ class ode():
                 subds_dict["stochastic2"] ="float noise = curand_normal(state);" 
                 subds_dict["stochastic3"] = ", state" 
                 subds_dict["stochastic4"] ="""curandState state;
-                            curand_init(1234, m, 0, &state);"""
-                subds_dict["stochastic5"] =",&state"    
+                            curand_init(seed, m, 0, &state);"""
+                subds_dict["stochastic5"] =",&state"
+                subds_dict["stochastic6"] =",int seed"
 
             subds_dict["device0"] ="""extern "C"{"""
             subds_dict["device1"] ="__device__"
@@ -154,6 +174,22 @@ class ode():
             subds_dict["device4"] ="m = blockIdx.x*blockDim.x + threadIdx.x;"
 
         else:
+            
+            if stochastic:
+                subds_dict["stochastic0"] = """#include <random>
+
+                                              std::normal_distribution<float> distribution(0.0,1.0);"""
+
+                subds_dict["stochastic1"] =",std::default_random_engine *generator" 
+                subds_dict["stochastic2"] ="float noise = distribution(*generator);"
+                subds_dict["stochastic3"] = ",generator" 
+                subds_dict["stochastic4"] = "std::default_random_engine generator(seed+m);"
+
+                subds_dict["stochastic5"] =",&generator"    
+                subds_dict["stochastic6"] =",int seed"
+
+            subds_dict["device0"] ="""extern "C"{"""
+            subds_dict["device3"] ="}"
             
             subds_dict["cpu0"] ="#include <math.h>"
             subds_dict["cpu1"] ="for(m=0;m<M;m++){"
@@ -249,7 +285,7 @@ class ode():
                             X[i] += dt/6.*(F1[i] + F4[i] + 2.*(F2[i]+F3[i]));
                     }
     
-                    $device2 void odeRK4(float *Y,float * _param, float * _input, float *x0,  $save4, $save0, int Nterm, int decimate, int M)
+                    $device2 void odeRK4(float *Y,float * _param, float * _input, float *x0,  $save4, $save0, int Nterm, int decimate, int M $stochastic6)
                     {
                         // Y is the ouput must have N*K x M size
                         // the input must have N size
@@ -276,12 +312,16 @@ class ode():
                         // define the input array
                         float input[$I];
     
-                        $stochastic4                       
-    
+                        $debug printf("seed=%d\\n",seed );
+
+                                              
+
                         $debug printf("dt=%g\\n",dtm );
 
-          			  $cpu1
-    
+          			    $cpu1
+                        
+                        $stochastic4  
+
                         for(k=0;k<$K;k++)
                         {
                             X[k] = x0[k];
@@ -355,6 +395,7 @@ class ode():
             flo = "double"
         
         self.code = self.code_template.substitute(subds_dict).replace("float",flo)
+
         
     def compile(self):
         import pycuda.autoinit
@@ -372,15 +413,15 @@ class ode():
 
             import tempfile, os
 
-            fh = tempfile.NamedTemporaryFile(mode='w',suffix='.c')
+            fh = tempfile.NamedTemporaryFile(mode='w',suffix='.cpp')
             fh.write(self.code)
             fh.seek(0)
             
-            # os.environ["CC"]="g++"
+            os.environ["CC"]="g++"
 
             setup_script = \
 """from distutils.core import setup, Extension
-module1 = Extension('odeRK4', sources = ["%(filename)s"], libraries = ['m'])
+module1 = Extension('odeRK4', sources = ["%(filename)s"], libraries = ['m'], extra_compile_args = ['-std=c++11'] )
 setup(name = 'odeRK4',version = '1.0', ext_modules = [module1])""" % {"filename":fh.name}
             
             fh2 = tempfile.NamedTemporaryFile(mode='w',suffix='.py')
@@ -396,7 +437,8 @@ setup(name = 'odeRK4',version = '1.0', ext_modules = [module1])""" % {"filename"
             self.odeRK4 = ctypes.cdll.LoadLibrary("./build/lib.linux-x86_64-2.7/odeRK4.so").odeRK4        
 
 
-    def run(self, d_x0, d_params, dt, decimate = 1, inputs=None, N = None, Nterm = 0, THREAD_NUM = 32):
+    def run(self, d_x0, d_params, dt, decimate = 1, inputs=None, N = None, Nterm = 0, threads_per_block = 32,seed=None):
+
     
         import timeit
 
@@ -446,6 +488,7 @@ setup(name = 'odeRK4',version = '1.0', ext_modules = [module1])""" % {"filename"
         assert x0.size==K, "x0 size must be number of variables"       
 
         
+
         
         if self.variable_length:
             
@@ -463,14 +506,23 @@ setup(name = 'odeRK4',version = '1.0', ext_modules = [module1])""" % {"filename"
             Y = np.zeros( ((N-Nterm)*K/decimate,M) ).astype(dtype)
             dt = np.array(dt).astype(dtype) 
 
+        if self.stochastic:
+            import random,sys
+            if seed==None:
+                seed = np.int32(random.randint(0, sys.maxint))
+            else:
+                seed = np.int32(seed) 
+
+
+
         if self.gpu:
 
             assert self.odeRK4_gpu != None, "Compile the code first"
 
             import pycuda.driver as drv
          
-            gridShape = ( M / THREAD_NUM, 1, 1)
-            blockShape = (THREAD_NUM, 1, 1)
+            gridShape = ( M / threads_per_block, 1, 1)
+            blockShape = (threads_per_block, 1, 1)
             
             mem = np.dtype(dtype).itemsize*Y.size
 
@@ -481,17 +533,33 @@ setup(name = 'odeRK4',version = '1.0', ext_modules = [module1])""" % {"filename"
 
             if self.variable_length:
                 
-                tic = timeit.default_timer()
-                self.odeRK4_gpu( drv.Out(Y), drv.In(params), drv.In(inputs), drv.In(x0), drv.In(dt), drv.In(N), drv.In(cumsumN), Nterm, decimate, M , block=blockShape, grid=gridShape )
-                toc = timeit.default_timer()
+                if self.stochastic:
+
+                    tic = timeit.default_timer()
+                    self.odeRK4_gpu( drv.Out(Y), drv.In(params), drv.In(inputs), drv.In(x0), drv.In(dt), drv.In(N), drv.In(cumsumN), Nterm, decimate, M ,seed, block=blockShape, grid=gridShape )
+                    toc = timeit.default_timer()
+
+                else:
+
+                    tic = timeit.default_timer()
+                    self.odeRK4_gpu( drv.Out(Y), drv.In(params), drv.In(inputs), drv.In(x0), drv.In(dt), drv.In(N), drv.In(cumsumN), Nterm, decimate, M , block=blockShape, grid=gridShape )
+                    toc = timeit.default_timer()
     
                 return toc-tic,Y
                 
             else:
 
-                tic = timeit.default_timer()
-                self.odeRK4_gpu( drv.Out(Y), drv.In(params), drv.In(inputs), drv.In(x0), dt, N, Nterm,decimate, M ,  block=blockShape, grid=gridShape )
-                toc = timeit.default_timer()
+                if self.stochastic:
+                    
+                    tic = timeit.default_timer()
+                    self.odeRK4_gpu( drv.Out(Y), drv.In(params), drv.In(inputs), drv.In(x0), dt, N, Nterm,decimate, M , seed, block=blockShape, grid=gridShape )
+                    toc = timeit.default_timer()
+
+                else:
+                    
+                    tic = timeit.default_timer()
+                    self.odeRK4_gpu( drv.Out(Y), drv.In(params), drv.In(inputs), drv.In(x0), dt, N, Nterm,decimate, M ,  block=blockShape, grid=gridShape )
+                    toc = timeit.default_timer()
 
                 d_Y = {k:Y[i::K] for i,k in enumerate(self.dynvars)}
     
@@ -514,34 +582,71 @@ setup(name = 'odeRK4',version = '1.0', ext_modules = [module1])""" % {"filename"
             self.odeRK4.restype = None
             
             if self.variable_length:
+
+                if self.stochastic:
                 
-                self.odeRK4.argtypes = [ndpointer(flo, flags="C_CONTIGUOUS"),
-                                        ndpointer(flo, flags="F_CONTIGUOUS"),
-                                        ndpointer(flo, flags="F_CONTIGUOUS"),
-                                        ndpointer(flo, flags="C_CONTIGUOUS"),
-                                        ndpointer(flo, flags="C_CONTIGUOUS"),
-                                        ndpointer(flo, flags="C_CONTIGUOUS"),
-                                        ctypes.c_int,
-                                        ctypes.c_int,
-                                        ctypes.c_int,
-                                        ctypes.c_int]
+                    self.odeRK4.argtypes = [ndpointer(flo, flags="C_CONTIGUOUS"),
+                                            ndpointer(flo, flags="F_CONTIGUOUS"),
+                                            ndpointer(flo, flags="F_CONTIGUOUS"),
+                                            ndpointer(flo, flags="C_CONTIGUOUS"),
+                                            ndpointer(flo, flags="C_CONTIGUOUS"),
+                                            ndpointer(flo, flags="C_CONTIGUOUS"),
+                                            ctypes.c_int,
+                                            ctypes.c_int,
+                                            ctypes.c_int,
+                                            ctypes.c_int,
+                                            ctypes.c_int]
+                else:
+
+                    self.odeRK4.argtypes = [ndpointer(flo, flags="C_CONTIGUOUS"),
+                                            ndpointer(flo, flags="F_CONTIGUOUS"),
+                                            ndpointer(flo, flags="F_CONTIGUOUS"),
+                                            ndpointer(flo, flags="C_CONTIGUOUS"),
+                                            ndpointer(flo, flags="C_CONTIGUOUS"),
+                                            ndpointer(flo, flags="C_CONTIGUOUS"),
+                                            ctypes.c_int,
+                                            ctypes.c_int,
+                                            ctypes.c_int,
+                                            ctypes.c_int]
+
             else:
+
+                if self.stochastic:
+
+                    self.odeRK4.argtypes = [ndpointer(flo, flags="C_CONTIGUOUS"),
+                                            ndpointer(flo, flags="F_CONTIGUOUS"),
+                                            ndpointer(flo, flags="F_CONTIGUOUS"),
+                                            ndpointer(flo, flags="C_CONTIGUOUS"),
+                                            flo,
+                                            ctypes.c_int,
+                                            ctypes.c_int,
+                                            ctypes.c_int,
+                                            ctypes.c_int,
+                                            ctypes.c_int]
                 
-                self.odeRK4.argtypes = [ndpointer(flo, flags="C_CONTIGUOUS"),
-                                        ndpointer(flo, flags="F_CONTIGUOUS"),
-                                        ndpointer(flo, flags="F_CONTIGUOUS"),
-                                        ndpointer(flo, flags="C_CONTIGUOUS"),
-                                        flo,
-                                        ctypes.c_int,
-                                        ctypes.c_int,
-                                        ctypes.c_int,
-                                        ctypes.c_int,
-                                        ctypes.c_int]
+                else:
+                
+                    self.odeRK4.argtypes = [ndpointer(flo, flags="C_CONTIGUOUS"),
+                                            ndpointer(flo, flags="F_CONTIGUOUS"),
+                                            ndpointer(flo, flags="F_CONTIGUOUS"),
+                                            ndpointer(flo, flags="C_CONTIGUOUS"),
+                                            flo,
+                                            ctypes.c_int,
+                                            ctypes.c_int,
+                                            ctypes.c_int,
+                                            ctypes.c_int]
                 
             
-            tic = timeit.default_timer()
-            self.odeRK4( Y, params, inputs, x0, dt, N, Nterm, decimate, M , K )
-            toc = timeit.default_timer()
+            if self.stochastic:
+                tic = timeit.default_timer()
+                self.odeRK4( Y, params, inputs, x0, dt, N, Nterm, decimate, M ,seed )
+                toc = timeit.default_timer()
+
+            else:
+
+                tic = timeit.default_timer()
+                self.odeRK4( Y, params, inputs, x0, dt, N, Nterm, decimate, M )
+                toc = timeit.default_timer()
 
             d_Y = {k:Y[i::K] for i,k in enumerate(self.dynvars)}
             

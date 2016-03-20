@@ -106,7 +106,7 @@ def param_grid(**kwargs):
     if len(explore)==1:
         
         flats = []
-        flats.append(kwargs[explore[0]].flatten())
+        flats.append(np.array(kwargs[explore[0]]).flatten())
 
         M = flats[0].size
 

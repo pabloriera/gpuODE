@@ -23,14 +23,14 @@ __device__ float psi( float x,float c, float d)
 
 PARAMETERS = ["a","b","c","d","r","s","xr","i"]
 INPUTS = ["I"]
-FORMULA = {'x':'y + phi( x ,a,b)  - z + i + I', 
+FORMULA = {'x':'y + phi( x ,a,b)  - z + i + I + noise', 
             'y':'psi( x , c ,d )- y',
             'z':'r*(s*(x - xr) - z )'}
                          
 
 hr.setup(FORMULA, PARAMETERS, INPUTS)
 hr.extra_func = extra_func
-hr.generate_code(debug=False, stochastic = False, gpu = True, dtype = np.float32)
+hr.generate_code(debug=False, stochastic = True, gpu = True, dtype = np.float32)
 hr.compile()
 
 x0 = {'x':-1.6,'y':0,'z':2.5}

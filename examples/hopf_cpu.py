@@ -13,7 +13,7 @@ hopf = ode("hopf")
 
 PARAMETERS = ["e","w"]
 INPUTS = ["I1","I2"]
-FORMULA = {"x": "w*y + w*e*x - (x*x+y*y)*x + I1",
+FORMULA = {"x": "w*y + w*e*x - (x*x+y*y)*x + I1 ",
            "y": "-w*x + w*e*y - (x*x+y*y)*y + I2"}
 
 hopf.setup(FORMULA, PARAMETERS, INPUTS)

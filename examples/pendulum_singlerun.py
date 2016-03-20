@@ -19,7 +19,7 @@ params = {"e":[1.0],"g":[1000]}
 T = 10.0
 fs = 10000
 
-outs = run_ode( FORMULA, FUNCTION, INPUTS,  x0, params, T , fs, inputs = None, stochastic = False, Tterm = 0, gpu = False, nthreads = 4 , dtype = np.float32)
+outs = run_ode( FORMULA, FUNCTION, INPUTS,  x0, params, T , fs, inputs = None, stochastic = False, Tterm = 0, gpu = False, nthreads = 1 , dtype = np.float32)
 
 ph = outs[0]['out'][1]['ph']
 w = outs[0]['out'][1]['w']
