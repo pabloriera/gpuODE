@@ -10,7 +10,7 @@ import numpy as np
 
 osc = ode("osc")
 
-INPUTS = []
+INPUTS = ["I"]
 PARAMETERS = ["e","w"]
 FORMULA = {"x": "w*y + w*e*x",
            "y": "-w*x + w*e*y"}

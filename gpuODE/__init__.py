@@ -3,10 +3,8 @@
 Simulation of dynamical systems with gpu
 """
 
-
 import numpy as np
 from utils import *
-
 
 def run_ode( FORMULA, FUNCTIONS, INPUTS,  inits, params, T , fs, inputs = None, decimate=1 ,variable_length = False, stochastic = False, Tterm = 0, gpu = False, nthreads = 4 , dtype = np.float32, debug = False,seed =None,threads_per_block=32 ):
     
@@ -19,10 +17,10 @@ def run_ode( FORMULA, FUNCTIONS, INPUTS,  inits, params, T , fs, inputs = None, 
     odeRK4.setup(FORMULA, PARAMETERS, INPUTS)
     
     Tt = T + Tterm
-    dt = 1.0/float(fs)
+    dt = 1.0/np.array(fs)
     N = np.int32(Tt*fs)
     
-    Nterm = np.int32(Tterm*fs).min()
+    Nterm = np.int32(Tterm*fs)
     
     extra_funcs = funcs2code(FUNCTIONS, gpu = gpu)
     odeRK4.extra_func = extra_funcs
@@ -127,6 +125,7 @@ class ode():
         subds_dict["stochastic3"] = ""
         subds_dict["stochastic4"] = ""
         subds_dict["stochastic5"] = ""
+        subds_dict["stochastic6"] = ""
                     
         subds_dict["cpu0"] =""
         subds_dict["cpu1"] =""
@@ -141,7 +140,7 @@ class ode():
         if variable_length:
         
             subds_dict["save0"] = "int * N, int * cumsumN"
-            subds_dict["save1"] ="Y[ ( cumsumN[m] + c )*`self.K`+ k ] = X[k];"
+            subds_dict["save1"] ="Y[ ( cumsumN[m] + c )*"+`self.K`+"+ k ] = X[k];"
             subds_dict["save2"] ="Nm = N[m];"
             subds_dict["save3"] ="0;"
             subds_dict["save4"] ="float *dt"
