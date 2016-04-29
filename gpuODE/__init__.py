@@ -7,7 +7,6 @@ import numpy as np
 from utils import *
 
 def run_ode( FORMULA, FUNCTIONS, INPUTS,  inits, params, T , fs, inputs = None, decimate=1 ,variable_length = False, stochastic = False, Tterm = 0, gpu = False, nthreads = 4 , dtype = np.float32, debug = False,seed =None,threads_per_block=32 ):
-    
     from gpuODE import ode, param_grid, funcs2code
 
            
@@ -30,16 +29,19 @@ def run_ode( FORMULA, FUNCTIONS, INPUTS,  inits, params, T , fs, inputs = None, 
     if gpu==True:
 
         time, out = odeRK4.run(inits, param_grid(**params) , dt, decimate = decimate, inputs=inputs, N = N, Nterm = Nterm,seed = seed,threads_per_block=threads_per_block)
-
         return time, out
         
     else:
+
         import distributed_exploration as de
         import timeit
+        from random import randint
+        seed_off = 0
 
         #Modifications are needed to change the seed on differnet threads
         def func(**args):
-            time,out = odeRK4.run(inits, args, dt ,decimate=decimate, inputs=inputs, N = N , Nterm = Nterm,seed = seed)
+            seedr = seed + randint(0,10000)
+            time,out = odeRK4.run(inits, args, dt ,decimate=decimate, inputs=inputs, N = N , Nterm = Nterm,seed = seedr)
             return time, out
         
         tic = timeit.default_timer()
@@ -492,13 +494,13 @@ setup(name = 'odeRK4',version = '1.0', ext_modules = [module1])""" % {"filename"
         if self.variable_length:
             
             N = np.array(N).astype(np.int32)
-            cumsumN = np.r_[0,np.cumsum(N)[:-1]]
+            cumsumN = np.r_[0,np.cumsum(N/decimate)[:-1]]
             cumsumN = cumsumN.astype(np.int32)
-            Y = np.zeros( (N-Nterm).sum()*K/decimate ).astype(dtype)
+            Y = np.zeros( np.sum( (N-Nterm)/decimate ) *K ).astype(dtype)
             
             dt = np.array(dt).astype(dtype)
             
-            inputs = np.zeros(((N-Nterm).sum(),I)).astype(dtype, order='F')
+            inputs = np.zeros((  np.sum( (N-Nterm)/decimate ) ,I)).astype(dtype, order='F')
             
         else:
             N = self.N = np.int32(inputs.shape[0]) 
