@@ -6,7 +6,7 @@ Created on Wed Jun  3 07:23:23 2015
 """
 from __future__ import division
 from gpuODE import ode, param_grid
-import pylab as pl
+#import pylab as pl
 import numpy as np
             
 hopf = ode("hopf")
@@ -43,7 +43,7 @@ inputs = np.zeros((N,2))
 
 pgrid = param_grid(**params)
 
-time, out = hopf.run(x0, pgrid ,dt, N = N, Nterm = Nterm)
+time, out = hopf.run(x0, pgrid ,dt, N = N, Nterm = Nterm,nthreads=16)
 
 x = out['x']
 
