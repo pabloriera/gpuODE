@@ -55,9 +55,9 @@ td = t[::decimate]
 
 x = out['x']
 
-pl.figure(35)
-pl.clf()
-pl.plot(td[:-1], -diff(x,axis=0) + np.ones((td.size-1,M))*np.arange(M)*1)
+#pl.figure(35)
+#pl.clf()
+#pl.plot(td[:-1], -diff(x,axis=0) + np.ones((td.size-1,M))*np.arange(M)*1)
 
 #spi = {}
 import pandas as pd

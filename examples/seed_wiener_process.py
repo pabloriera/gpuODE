@@ -13,14 +13,14 @@ INPUTS = []
 FORMULA = {"w": "noise"}
            
 x0 = {'w':0}
-M = 2
+M = 32
 params = {'d':np.ones(M)}
 
 T = 0.001
 fs = 1000
 
 stochastic = True
-gpu = False
+gpu = True
            
 PARAMETERS = params.keys()
    
@@ -53,8 +53,6 @@ if gpu==True:
     w = out['w']
     
 else:
-
-
 
     time,out = odeRK4.run(x0, param_grid(**params) , dt,decimate=decimate, inputs=inputs, N = N , Nterm = Nterm,seed = 1234) 
     

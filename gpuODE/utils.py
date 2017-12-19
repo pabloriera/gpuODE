@@ -1,28 +1,27 @@
 import numpy as np
 
-def eqparser2(FORMULA, PARAMETERS=[], INPUTS=[]):
+def eqparser2(formula, parameters=[], inputs=None, noise_sources=None):
 
-    assert type(FORMULA)==dict,"FORMULA must be a dict"
-    assert type(PARAMETERS)==list,"PARAMETERS must be a list"
-    assert type(INPUTS)==list,"INPUTS must be a list"
+    assert type(formula)==dict,"formula must be a dict"
+    assert type(parameters)==list,"parameters must be a list"
     
     """
     EXAMPLE HOPF NORMAL FORM\n
-    PARAMETERS = ["e", "w"]\n
-    INPUTS = ["I1", "I2"]\n
-    FORMULA = {'x': '2*PI*w*y + e*x - (x*x+y*y)*x + I1','y': '-2*PI*w*x + e*y - (x*x+y*y)*y + I2'}
+    parameters = ["e", "w"]\n
+    inputs = ["I1", "I2"]\n
+    formula = {'x': '2*PI*w*y + e*x - (x*x+y*y)*x + I1','y': '-2*PI*w*x + e*y - (x*x+y*y)*y + I2'}
     """
 
     import re
 
-    #    eq = FORMULA.__repr__()
+    #    eq = formula.__repr__()
     eq = ""
 
-    dynvars = FORMULA.keys()
+    dynvars = formula.keys()
     
     for i,k in enumerate(dynvars):
                
-        aux = FORMULA[k]
+        aux = formula[k]
 
         for j,k2 in enumerate(dynvars):
             aux = re.sub('\\b'+ k2 + '\\b', "X["+`j`+"]", aux)  
@@ -30,43 +29,47 @@ def eqparser2(FORMULA, PARAMETERS=[], INPUTS=[]):
         eq = eq+"dX["+`i`+"]=" + aux + ";\n"       
         
     
-    params = PARAMETERS
-    inputs = INPUTS
+    params = parameters
+    
 
     for i,p in enumerate(params):
         eq = re.sub('\\b'+ p + '\\b', "param["+`i`+"]", eq)
 
-    for i,p in enumerate(inputs):
-        eq = re.sub('\\b'+ p + '\\b', "input["+`i`+"]", eq)
+    n_inputs=0
+    if inputs:
+        assert type(inputs)==list,"inputs must be a list"
 
+        for i,p in enumerate(inputs):
+            eq = re.sub('\\b'+ p + '\\b', "input["+`i`+"]", eq)
 
-    N_INPUTS = len(inputs)
-    N_EQ = len(dynvars)
-    N_PARAMETERS = len(params)
+        n_inputs = len(inputs)
 
-    return dynvars, eq, N_EQ, N_PARAMETERS, N_INPUTS
     
+    n_eq = len(dynvars)
+    n_parameters = len(params)
+
+    return dynvars, eq, n_eq, n_parameters, n_inputs    
     
 
-def eqparser(FORMULA, PARAMETERS, INPUTS):
+def eqparser(formula, parameters, inputs):
 
     """
     EXAMPLE HOPF NORMAL FORM\n
-    PARAMETERS = "e w"\n
-    INPUTS = "I1 I2"\n
-    FORMULA = "dx = 2*PI*w*y + e*x - (x*x+y*y)*x + I1; dy = -2*PI*w*x + e*y - (x*x+y*y)*y + I2;"\n
+    parameters = "e w"\n
+    inputs = "I1 I2"\n
+    formula = "dx = 2*PI*w*y + e*x - (x*x+y*y)*x + I1; dy = -2*PI*w*x + e*y - (x*x+y*y)*y + I2;"\n
     """
 
     import re
 
-    eq = FORMULA
-    dynvars = re.findall("d([a-zA-Z])\ *=",FORMULA)
-    params = PARAMETERS.split(" ")
+    eq = formula
+    dynvars = re.findall("d([a-zA-Z])\ *=",formula)
+    params = parameters.split(" ")
 
-    if INPUTS.count(" ")==len(INPUTS):
+    if inputs.count(" ")==len(inputs):
         inputs = []
     else:
-        inputs = INPUTS.split(" ")
+        inputs = inputs.split(" ")
 
     for p,i in zip(params,range(len(params))):
         eq = re.sub('\\b'+ p + '\\b', "param["+`i`+"]", eq)
@@ -83,11 +86,11 @@ def eqparser(FORMULA, PARAMETERS, INPUTS):
     for dv,i in zip(dynvars,range(len(dynvars))):
         eq = eq.replace(';',';\n ')
 
-    N_INPUTS = len(inputs)
-    N_EQ = len(dynvars)
-    N_PARAMETERS = len(params)
+    n_inputs = len(inputs)
+    n_eq = len(dynvars)
+    n_parameters = len(params)
 
-    return dynvars, eq, N_EQ, N_PARAMETERS, N_INPUTS
+    return dynvars, eq, n_eq, n_parameters, n_inputs
 
 def param_grid(**kwargs):
 
@@ -181,3 +184,8 @@ def funcs2code(fnspecs,gpu=False):
         string+= s1 + fkey + "(" + args + s2 + s3 + func + ";\n}\n "
 
     return string
+
+def chunks(l, n):
+    """Yield successive n-sized chunks from l."""
+    for i in xrange(0, len(l), n):
+        yield l[i:i+n]

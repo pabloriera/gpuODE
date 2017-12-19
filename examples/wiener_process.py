@@ -12,10 +12,10 @@ INPUTS = []
 FORMULA = {"w": "noise"}
            
 x0 = {'w':0}
-M = 2
+M = 32
 params = {'d':np.ones(M)}
 
-T = 0.001
+T = 100
 fs = 1000
 
 stochastic = True
@@ -23,16 +23,13 @@ gpu = False
 
 if gpu:
     time, outs = run_ode( FORMULA, FUNCTION, INPUTS,  x0, params, T , fs, inputs = None, stochastic = stochastic, Tterm = 0, gpu = gpu , dtype = np.float32)
-    w = outs['w']
 
 else:
     
-    outs = run_ode( FORMULA, FUNCTION, INPUTS,  x0, params, T , fs, inputs = None, stochastic = stochastic, nthreads= 1, Tterm = 0, gpu = gpu , dtype = np.float32,debug=True,seed=1234)
+    t,outs = run_ode( FORMULA, FUNCTION, INPUTS,  x0, params, T , fs, inputs = None, stochastic = stochastic, nthreads= 16, Tterm = 0, gpu = gpu , dtype = np.float32,debug=False,seed=1234)
     
-    w = np.zeros((int(T*fs),len(outs)))
-    for i,o in enumerate(outs):
-        w[:,i] = o['out'][1]['w'].T
-    
+w = outs['w']
+
 
 pl.figure()
 pl.plot(w)
